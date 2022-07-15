@@ -258,7 +258,7 @@ gsva_heatmap <- Heatmap(
   heatmap_legend_param = list(direction = "horizontal")
 )
 
-pdf(gsva_pdf, width = 5.75, height = 5)
+pdf(gsva_pdf, width = 5.75, height = 5, useDingbats = FALSE)
 draw(gsva_heatmap, heatmap_legend_side = "bottom")
 dev.off()
 
