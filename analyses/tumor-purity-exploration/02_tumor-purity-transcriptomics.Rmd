@@ -1,0 +1,146 @@
+---
+title: "Tumor purity relationship on transcriptomics data"
+author: "SJ Spielman for CCDL"
+date: "2022"
+output: 
+  html_notebook:
+    toc: TRUE
+    toc_float: TRUE
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+theme_set(ggpubr::theme_pubr())
+```
+This notebook explores how tumor purity may relate to certain transcriptomic-level analyses, including the TP53 classifier scores, EXTEND scores, and maybe also GSVA somehow.
+
+### Set directories and files
+
+```{r}
+root_dir <- rprojroot::find_root(rprojroot::has_dir(".git"))
+data_dir <- file.path(root_dir, "data")
+pal_dir <- file.path(root_dir, "figures", "palettes")
+tp53_dir <- file.path(root_dir, "analyses", "tp53_nf1_score")
+extend_dir <- file.path(root_dir, "analyses", "telomerase-activity-prediction")
+
+
+metadata_file <- file.path(data_dir, "pbta-histologies.tsv")
+pal_file <- file.path(pal_dir, "broad_histology_cancer_group_palette.tsv")
+```
+
+### Read and setup files
+
+```{r}
+
+metadata <- read_tsv(metadata_file) # variable is `tumor_fraction`
+palette_mapping_df <- read_tsv(pal_file)
+
+tp53_scores <- read_tsv(
+  file.path(
+    tp53_dir, 
+    "results", 
+    "tp53_altered_status.tsv"
+  )
+)
+
+extend_scores <- read_tsv(
+  file.path(
+    extend_dir, 
+    "results",
+    "TelomeraseScores_PTBAStranded_FPKM.txt"
+  )
+)
+```
+
+
+```{r}
+# get stranded tumor fractions
+stranded_patient_ids <- metadata %>%
+  filter(experimental_strategy == "RNA-Seq", 
+         RNA_library == "stranded") %>%
+  pull(Kids_First_Participant_ID)
+
+# Combine info - 
+tumor_df <- metadata %>%
+  # get tumor fraction info
+  filter(Kids_First_Participant_ID %in% stranded_patient_ids) %>%
+  select(Kids_First_Participant_ID, 
+         Kids_First_Biospecimen_ID, 
+         tumor_fraction, 
+         cancer_group, 
+         broad_histology) %>%
+  # combine with tp53
+  inner_join(
+    select(
+      tp53_scores, 
+      Kids_First_Biospecimen_ID = Kids_First_Biospecimen_ID_DNA,
+      tp53_score, 
+      tp53_altered
+    )
+  ) %>%
+  # Currently the biospecimen IDs are for DNA, wrangle so they are RNA instead
+  #  so that extend scores can be joined in
+  rename(Kids_First_Biospecimen_ID_DNA = Kids_First_Biospecimen_ID) %>%
+  inner_join(
+    select(metadata,
+           Kids_First_Participant_ID, 
+           Kids_First_Biospecimen_ID)
+  ) %>%
+  # combine with extend
+  inner_join(
+    select(
+      extend_scores,
+      Kids_First_Biospecimen_ID = SampleID,
+      extend_score = NormEXTENDScores
+    )
+  )
+tumor_df
+```
+
+### Is there a there there?
+
+#### Tumor purity across TP53 altered status
+No.
+```{r}
+tp53_altered_df <- tumor_df %>%
+  filter(tp53_altered != "other")
+
+ggplot(tp53_altered_df) + 
+  aes(x = tp53_altered, y = tumor_fraction) + 
+  geom_jitter(width = 0.2, alpha = 0.5) + 
+  stat_summary(color = "red", size=0.75)
+
+wilcox.test(tumor_fraction ~ tp53_altered, data = tp53_altered_df)
+```
+<br>
+
+
+#### Tumor purity across TP53 scores
+
+Not much, but this does _not_ stratify by histology.
+
+```{r}
+ggplot(tumor_df) + 
+  aes(x = tumor_fraction, y = tp53_score) + 
+  geom_point() + 
+  geom_smooth(method = "lm")
+
+cor.test(tp53_altered_df$tumor_fraction, tp53_altered_df$tp53_score) # sigificant
+cor.test(tp53_altered_df$tumor_fraction, tp53_altered_df$tp53_score, method = "spearman") # not significant but ties.
+```
+<br>
+
+#### Tumor purity across EXTEND scores
+
+Not much, but this does _not_ stratify by histology.
+
+```{r}
+ggplot(tumor_df) + 
+  aes(x = tumor_fraction, y = extend_score) + 
+  geom_point() + 
+  geom_smooth(method = "lm")
+
+cor.test(tp53_altered_df$tumor_fraction, tp53_altered_df$extend_score) # sigificant
+cor.test(tp53_altered_df$tumor_fraction, tp53_altered_df$extend_score, method = "spearman") # significant 
+```
+<br>
